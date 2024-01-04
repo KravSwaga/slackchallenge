@@ -1,0 +1,5 @@
+{
+    "php": "<?php \nheader(\"Content-Type: text/plain\");\necho \"Hello, world!\";\n?>",
+    "servers": ["3.90.108.108","54.90.133.84"],
+    "username": "root"
+}
