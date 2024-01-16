@@ -46,85 +46,62 @@ def create_ssh_session(server):
             print('Connected to '+server)
         except pexpect.exceptions.TIMEOUT:
             print('ERROR: timeout connecting to server' +server)
+            debuglog=debuglog + str(session.before) + str(session.after)
             print(debuglog)
             sys.exit(1)
     
     return session
     #END CREATE_SSH_SESSION
 
-#Check if php is installed and install it if required
-def check_php(session, attempt=0):
-    print('Checking PHP:')
-    session.sendline('php -v')
-    phpcheck=session.expect(['Zend Technologies',"Command 'php' not found",pexpect.TIMEOUT])
-    if phpcheck==2:
-        print('ERROR: unable to check for php due to timeout')
+def apt_install(session, instruction, attempt=0):
+    name=instruction['name']
+    command='apt install ' +name +' -y'
+    verify=instruction['verify command']
+    success=instruction['verify success']
+    fail=instruction['verify fail']
+    
+    
+    print('Checking ' +name +':')
+    session.sendline(verify)
+    check=session.expect([success,fail,pexpect.TIMEOUT])
+    debuglog=''
+    if check==2:
+        print('ERROR: unable to check install due to timeout')
         return False
-    elif phpcheck==1:
-        print('Need to install php')
-        session.sendline('apt install php7.2-cli -y')
+    elif check==1:
+        print('Need to install ' +name)
+        session.sendline(command)
         try:
-            session.expect('The following additional packages will be installed',timeout=30)
+            session.expect('The following NEW packages will be installed:',timeout=30)
             debuglog=str(session.before) + str(session.after)
             session.expect(':~# ', timeout=120)
             debuglog=debuglog + str(session.before) + str(session.after)
             #print(debuglog)
-            print('Attempted install of PHP')
+            print('Attempted install of ' +name)
             #lovely little bit of recursion with a counter to break it after 3 failed attempts
             if attempt<3:
-                return check_php(session,attempt+1)   
+                return apt_install(session, instruction, attempt+1)   
             else:
                 print('Failed to install php after 3 attempts')
                 return False
         except pexpect.exceptions.TIMEOUT:
             print(debuglog)
             return False        
-    elif phpcheck==0:
-        print('PHP is installed')
+    elif check==0:
+        print(name +' is installed')
         return True
     #END CHECK_PHP
 
-def check_apache(session,attempt=0):
-    print('Checking Apache:')
-    session.sendline('apache2 -v')
-    phpcheck=session.expect(['Server version: Apache',"Command 'apache2' not found",pexpect.TIMEOUT])
-    if phpcheck==2:
-        print('ERROR: unable to check for Apache due to timeout')
-        return False
-    elif phpcheck==1:
-        print('Need to install Apache')
-        session.sendline('apt install libapache2-mod-php -y')
-        try:
-            session.expect('The following additional packages will be installed',timeout=30)
-            debuglog=str(session.before) + str(session.after)
-            session.expect(':~# ', timeout=120)
-            debuglog=debuglog + str(session.before) + str(session.after)
-            #print(debuglog)
-            print('Attempted install of Apache')
-            #lovely little bit of recursion with a counter to break it after 3 failed attempts
-            if attempt<3:
-                return check_apache(session,attempt+1)
-            else:
-                print('Failed to install Apache after 3 attempts')
-                return False
-        except pexpect.exceptions.TIMEOUT:
-            print(debuglog)
-            return False        
-    elif phpcheck==0:
-        print('Apache is installed')
-        return True    
-    #END CHECK_APACHE
-
-def create_indexphp(php):
-    print('Creating index.php')
-    outfile=open('index.php','w+')
-    outfile.write(php)
+def create_file(content, name):
+    print('Creating ' +name)
+    outfile=open(name,'w+')
+    outfile.write(content)
     outfile.close()
     #END CREATE_INDEXPHP
 
-def copy_indexphp(username,server,password):
-    print('Copying index.php to ' +server)
-    scpsession=pexpect.spawn('scp index.php ' +username +'@' +server +':/var/www/html/index.php')
+def upload_file(username, server, password, name, location):
+    print('Copying ' +name +' to ' +location +' on ' +server)
+    scpsession=pexpect.spawn('scp ' +name +' ' +username +'@' +server +':' +location +'/' +name)
     try:
         scpsession.expect("'s password",timeout=10)
         debuglog=str(scpsession.before) + str(scpsession.after)
@@ -141,23 +118,24 @@ def copy_indexphp(username,server,password):
     return True
     #END COPY_INDEXPHP
 
-def remove_indexhtml(session):
-    print('Removing old index.html')
-    session.sendline('mv /var/www/html/index.html /var/www/html/index.html.old')
+def remove_oldfile(session, name, location):
+    newfile=location +'/' +name
+    print('Removing old ' +newfile)
+    session.sendline('mv ' +newfile +' ' +newfile +'.old')
     status=session.expect(['No such file or directory',':~# ',pexpect.TIMEOUT], timeout=10)
     debuglog=str(session.before) + str(session.after)
     if status==0:
-        print('INFO: index.html does not exist, proceeding')
+        print('INFO: ' +newfile +' does not exist, proceeding')
     elif status==1:
-        print('INFO: index.html renamed to index.html.old, proceeding')
+        print('INFO: ' +newfile +' renamed to ' +newfile +'.old, proceeding')
     elif status==2:
         print(debuglog)
-        print('ERROR: failed to remove index.html, check status manually in /var/www/html/ on ' +server)   
+        print('ERROR: failed to remove old ' +newfile +', check status manually')   
     #END REMOVE_INDEXHTML
  
-def restart_apache(server):
-    print('Restarting Apache')
-    session.sendline('systemctl restart apache2.service')
+def restart_service(server, service):
+    print('Restarting ' +service)
+    session.sendline('systemctl restart ' +service +'.service')
     try:
         session.expect(':~# ', timeout=10)
         debuglog=str(session.before) + str(session.after)
@@ -169,7 +147,7 @@ def restart_apache(server):
     #END RESTART_APACHE    
     
 
-def test_helloworld(server):
+def check_curl(server):
     url='http://' +server
     print('Testing server response '+url)
     response=requests.get(url)
@@ -190,60 +168,49 @@ if __name__ == "__main__":
     
     print('*'*36)
     username=config['username']
-    php=config['php']
     print('\nUsername: ' +username)
 
+    print('*'*36)
     print('\nServer IPs:')
     for server in config['servers']:
         print(server)
-    
-    print('\nPHP application:')
-    print(php)
+
     print('*'*36)
-    
+    print('\nInstruction set:')
+    for instruction in config['instructions']:
+        print(str(instruction) +'\n')    
+   
+    print('*'*36)
     password=getpass.getpass('Enter root password: ')
 
-    #Create index.php file
-    print('*'*36)
-    create_indexphp(php)
-
-    #server=config['servers'][0]
     for server in config['servers']:
         #create ssh session on server
         print('*'*36)
         print('Connecting to ' +server)
         session=create_ssh_session(server)
         
-        #Check if php is installed, install it if not
-        success=check_php(session)
-        if not success:
-            print('ERROR: failed to check/install PHP')
-            sys.exit(1)
-            
-        #Check if Apache is installed, install it if notCheck if php is installed, install it if not
-        success=check_apache(session)
-        if not success:
-            print('ERROR: failed to check/install Apache')
-            sys.exit(1)
-
-        #scp index.php file to server
-        success=copy_indexphp(username,server,password)
-        if not success:
-            print('ERROR: failed to scp index.php to' +server)
-            sys.exit(1)
-        
-        #remove_indexhtml(session)
-        
-        success=restart_apache(session)
-        if not success:
-            print('ERROR: failed to restart Apache on' +server)
-            sys.exit(1)     
-
-        response=test_helloworld(server)
-        if response=='Hello, world!':
-            print('INFO: server ' +server + ' configured successfully!')
-        else:
-            print('ERROR: Failed to configure server ' +server)
+        for instruction in config['instructions']:
+            if instruction['type']=="apt_install":
+                print('*'*36)
+                print("Executing apt_install of " +instruction['name'])
+                apt_install(session, instruction)
+            elif instruction['type']=="upload_file":
+                print('*'*36)
+                print('Uploading file to ' +server)
+                create_file(instruction['content'], instruction['name'])
+                remove_oldfile(session, instruction['name'], instruction['location'])
+                upload_file(username, server, password, instruction['name'], instruction['location'])
+            elif instruction['type']=="restart_service":
+                print('*'*36)
+                service=instruction['name']
+                print('Restarting service ' + service)               
+                restart_service(server, service)
+            elif instruction['type']=="check_curl":
+                response=check_curl(server)
+                if response=='Hello, world!':
+                    print('INFO: server ' +server + ' configured successfully!')
+                else:
+                    print('ERROR: Failed to configure server ' +server)
         
     print('*'*36)
     print('INFO: Completed')

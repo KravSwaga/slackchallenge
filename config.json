@@ -1,5 +1,34 @@
 {
-    "php": "<?php \nheader(\"Content-Type: text/plain\");\necho \"Hello, world!\";\n?>",
     "servers": ["3.90.108.108","54.90.133.84"],
-    "username": "root"
+    "username": "root",
+	"instructions": [
+		{
+			"type": "apt_install",
+			"name": "php7.2-cli",
+			"verify command": "php -v",
+			"verify success": "Zend Technologies",
+			"verify fail": "Command 'php' not found"
+		},
+		{
+			"type": "apt_install",
+			"name": "libapache2-mod-php",
+			"verify command": "apache2 -v",
+			"verify success": "Server version: Apache",
+			"verify fail": "Command 'apache2' not found"
+		},
+		{
+			"type": "upload_file",
+			"name": "index.php",
+			"location": "/var/www/html",
+			"content": "<?php \nheader(\"Content-Type: text/plain\");\necho \"Hello, world!\";\n?>"
+		},
+		{
+			"type": "restart_service",
+			"name": "apache2"
+		},
+		{
+			"type": "check_curl",
+			"expected output": "Hello, world!"
+		}
+	]	
 }
